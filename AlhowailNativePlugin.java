@@ -12,6 +12,17 @@ import android.os.Looper;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
+import android.print.PdfPrinter;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Environment;
+import android.provider.MediaStore;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
@@ -137,6 +148,106 @@ public class AlhowailNativePlugin extends Plugin {
                 printView = wv;
                 wv.loadDataWithBaseURL("https://fonts.googleapis.com/", html, "text/html", "UTF-8", null);
             }
+        });
+    }
+
+    /* ---------- PDF: build the file from HTML, then share (WhatsApp / any app) or save to Downloads ---------- */
+    private void makePdf(final String html, final String name, final PdfPrinter.Done done) {
+        getActivity().runOnUiThread(new Runnable() {
+            @Override public void run() {
+                final boolean[] started = { false };
+                final WebView wv = new WebView(getActivity());
+                wv.getSettings().setJavaScriptEnabled(false);
+                wv.setWebViewClient(new WebViewClient() {
+                    @Override public void onPageFinished(WebView view, String url) {
+                        if (started[0]) return;
+                        started[0] = true;
+                        final File dir = new File(getContext().getCacheDir(), "pdf");
+                        dir.mkdirs();
+                        final File out = new File(dir, safeName(name) + ".pdf");
+                        // small delay so web fonts (Arabic) finish painting
+                        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() { @Override public void run() {
+                            PrintAttributes attrs = new PrintAttributes.Builder()
+                                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                                .setResolution(new PrintAttributes.Resolution("pdf", "pdf", 300, 300))
+                                .setMinMargins(PrintAttributes.Margins.NO_MARGINS).build();
+                            PdfPrinter.write(view.createPrintDocumentAdapter(name), attrs, out, done);
+                        } }, 700);
+                    }
+                });
+                printView = wv;
+                wv.loadDataWithBaseURL("https://fonts.googleapis.com/", html, "text/html", "UTF-8", null);
+            }
+        });
+    }
+
+    private static String safeName(String n) {
+        String s = n == null ? "Alhowail" : n.replaceAll("[\\\\/:*?\"<>|]", "-").trim();
+        return s.isEmpty() ? "Alhowail" : (s.length() > 90 ? s.substring(0, 90) : s);
+    }
+
+    @PluginMethod
+    public void sharePdf(final PluginCall call) {
+        final String html = call.getString("html");
+        final String name = call.getString("name", "Alhowail");
+        final String target = call.getString("target", "any");
+        if (html == null || html.isEmpty()) { call.reject("Nothing to share"); return; }
+        makePdf(html, name, new PdfPrinter.Done() {
+            @Override public void ok(File file) {
+                try {
+                    Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("application/pdf");
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    Intent chosen = null;
+                    if ("whatsapp".equals(target)) {
+                        for (String pkg : new String[] { "com.whatsapp", "com.whatsapp.w4b" }) {
+                            Intent w = new Intent(send); w.setPackage(pkg);
+                            if (w.resolveActivity(getContext().getPackageManager()) != null) { chosen = w; break; }
+                        }
+                    }
+                    if (chosen == null) chosen = Intent.createChooser(send, name);
+                    getActivity().startActivity(chosen);
+                    JSObject r = new JSObject(); r.put("shared", true); call.resolve(r);
+                } catch (Exception e) { call.reject("Could not share the PDF", "SHARE_FAILED"); }
+            }
+            @Override public void fail(String why) { call.reject("Could not create the PDF: " + why, "PDF_FAILED"); }
+        });
+    }
+
+    @PluginMethod
+    public void savePdf(final PluginCall call) {
+        final String html = call.getString("html");
+        final String name = call.getString("name", "Alhowail");
+        if (html == null || html.isEmpty()) { call.reject("Nothing to save"); return; }
+        makePdf(html, name, new PdfPrinter.Done() {
+            @Override public void ok(File file) {
+                try {
+                    String fileName = safeName(name) + ".pdf";
+                    if (Build.VERSION.SDK_INT >= 29) {
+                        ContentValues v = new ContentValues();
+                        v.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                        v.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+                        v.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                        Uri dest = getContext().getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                        if (dest == null) throw new Exception("no destination");
+                        try (InputStream in = new FileInputStream(file); OutputStream os = getContext().getContentResolver().openOutputStream(dest)) {
+                            byte[] buf = new byte[8192]; int n; while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                        }
+                        JSObject r = new JSObject(); r.put("saved", true); r.put("where", "Downloads/" + fileName); call.resolve(r);
+                    } else {
+                        // Android 9 and older: let the user pick where to save / which app to open it with
+                        Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", file);
+                        Intent view = new Intent(Intent.ACTION_VIEW);
+                        view.setDataAndType(uri, "application/pdf");
+                        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        getActivity().startActivity(Intent.createChooser(view, fileName));
+                        JSObject r = new JSObject(); r.put("saved", true); r.put("where", "chooser"); call.resolve(r);
+                    }
+                } catch (Exception e) { call.reject("Could not save the PDF", "SAVE_FAILED"); }
+            }
+            @Override public void fail(String why) { call.reject("Could not create the PDF: " + why, "PDF_FAILED"); }
         });
     }
 }
