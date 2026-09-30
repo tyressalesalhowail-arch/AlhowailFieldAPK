@@ -1,0 +1,51 @@
+name: Build Alhowail Field APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "APK version"
+        required: true
+        default: "1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
+      - name: Find APK
+        run: find . -name "*.apk" -type f
+
+      - name: Rename APK
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/debug/app-debug.apk \
+             release/Alhowail-Field-v${{ inputs.version }}.apk
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" \
+            "release/Alhowail-Field-v${{ inputs.version }}.apk" \
+            --title "Alhowail Field v${{ inputs.version }}" \
+            --notes "Alhowail Field APK version ${{ inputs.version }}"
