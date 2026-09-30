@@ -37,8 +37,15 @@ jobs:
       - name: Create Android project
         run: |
           rm -rf android
+
           npx cap add android
+
           node patch-android.js
+
+          # Capacitor needs the Android assets directory
+          # even when server.url is used.
+          mkdir -p android/app/src/main/assets/public
+
           npx cap sync android
 
       - name: Restore signing key
