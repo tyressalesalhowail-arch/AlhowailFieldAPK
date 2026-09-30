@@ -1,36 +1,145 @@
-// Runs on GitHub after `npx cap add android`: adds our native plugin, icons, permissions, version and signing.
-const fs = require('fs'), path = require('path');
-const root = path.join(__dirname, '..'), android = path.join(root, 'android', 'app');
-const must = (cond, msg) => { if (!cond) { console.error('PATCH FAILED: ' + msg); process.exit(1); } };
+const fs = require("fs");
+const path = require("path");
 
-// 1) native code (plugin + MainActivity that registers it)
-const javaDir = path.join(android, 'src/main/java/com/alhowail/field');
-must(fs.existsSync(javaDir), 'java package folder not found: ' + javaDir);
-for (const f of ['AlhowailNativePlugin.java', 'MainActivity.java']) fs.copyFileSync(path.join(root, 'native', f), path.join(javaDir, f));
+const root = __dirname;
+const android = path.join(root, "android", "app");
 
-// 2) app icons (Al-Howail logo)
-const copyDir = (src, dst) => { fs.mkdirSync(dst, { recursive: true }); for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-  const s = path.join(src, e.name), d = path.join(dst, e.name); e.isDirectory() ? copyDir(s, d) : fs.copyFileSync(s, d); } };
-copyDir(path.join(root, 'resources/res'), path.join(android, 'src/main/res'));
+const must = (cond, msg) => {
+  if (!cond) {
+    console.error("PATCH FAILED: " + msg);
+    process.exit(1);
+  }
+};
 
-// 3) permissions: precise location + camera
-const manifestPath = path.join(android, 'src/main/AndroidManifest.xml');
-let manifest = fs.readFileSync(manifestPath, 'utf8');
-const perms = ['android.permission.ACCESS_FINE_LOCATION', 'android.permission.ACCESS_COARSE_LOCATION', 'android.permission.CAMERA']
-  .filter(p => !manifest.includes(p)).map(p => `    <uses-permission android:name="${p}" />`).join('\n');
-const feats = ['android.hardware.camera', 'android.hardware.location.gps'].filter(f => !manifest.includes(f))
-  .map(f => `    <uses-feature android:name="${f}" android:required="false" />`).join('\n');
-must(manifest.includes('<application'), 'no <application> in manifest');
-manifest = manifest.replace('<application', `${perms}\n${feats}\n\n    <application`);
+// 1) Native Java code
+const javaDir = path.join(
+  android,
+  "src",
+  "main",
+  "java",
+  "com",
+  "alhowail",
+  "field"
+);
+
+fs.mkdirSync(javaDir, { recursive: true });
+
+for (const file of ["AlhowailNativePlugin.java", "MainActivity.java"]) {
+  const source = path.join(root, file);
+  must(
+    fs.existsSync(source),
+    `Missing Java source file: ${source}`
+  );
+
+  fs.copyFileSync(
+    source,
+    path.join(javaDir, file)
+  );
+}
+
+// 2) Optional app resources/icons
+const resourcesDir = path.join(root, "resources", "res");
+const androidResDir = path.join(android, "src", "main", "res");
+
+if (fs.existsSync(resourcesDir)) {
+  const copyDir = (src, dst) => {
+    fs.mkdirSync(dst, { recursive: true });
+
+    for (const entry of fs.readdirSync(src, {
+      withFileTypes: true
+    })) {
+      const source = path.join(src, entry.name);
+      const destination = path.join(dst, entry.name);
+
+      if (entry.isDirectory()) {
+        copyDir(source, destination);
+      } else {
+        fs.copyFileSync(source, destination);
+      }
+    }
+  };
+
+  copyDir(resourcesDir, androidResDir);
+}
+
+// 3) Android permissions
+const manifestPath = path.join(
+  android,
+  "src",
+  "main",
+  "AndroidManifest.xml"
+);
+
+must(
+  fs.existsSync(manifestPath),
+  "AndroidManifest.xml not found"
+);
+
+let manifest = fs.readFileSync(manifestPath, "utf8");
+
+const permissions = [
+  "android.permission.ACCESS_FINE_LOCATION",
+  "android.permission.ACCESS_COARSE_LOCATION",
+  "android.permission.CAMERA"
+];
+
+for (const permission of permissions) {
+  if (!manifest.includes(permission)) {
+    manifest = manifest.replace(
+      "<application",
+      `<uses-permission android:name="${permission}" />\n\n    <application`
+    );
+  }
+}
+
+const features = [
+  "android.hardware.camera",
+  "android.hardware.location.gps"
+];
+
+for (const feature of features) {
+  if (!manifest.includes(feature)) {
+    manifest = manifest.replace(
+      "<application",
+      `<uses-feature android:name="${feature}" android:required="false" />\n\n    <application`
+    );
+  }
+}
+
 fs.writeFileSync(manifestPath, manifest);
 
-// 4) version (from the GitHub build) + release signing (keystore comes from GitHub secrets)
-const gradlePath = path.join(android, 'build.gradle');
-let gradle = fs.readFileSync(gradlePath, 'utf8');
-must(/versionCode\s+\d+/.test(gradle) && /versionName\s+"[^"]*"/.test(gradle), 'versionCode/versionName not found in app/build.gradle');
-gradle = gradle.replace(/versionCode\s+\d+/, 'versionCode Integer.parseInt(System.getenv("VERSION_CODE") ?: "1")')
-               .replace(/versionName\s+"[^"]*"/, 'versionName (System.getenv("VERSION_NAME") ?: "1.0")');
+// 4) Version + signing
+const gradlePath = path.join(android, "build.gradle");
+
+must(
+  fs.existsSync(gradlePath),
+  "android/app/build.gradle not found"
+);
+
+let gradle = fs.readFileSync(gradlePath, "utf8");
+
+must(
+  /versionCode\s+\d+/.test(gradle),
+  "versionCode not found in app/build.gradle"
+);
+
+must(
+  /versionName\s+"[^"]*"/.test(gradle),
+  "versionName not found in app/build.gradle"
+);
+
+gradle = gradle
+  .replace(
+    /versionCode\s+\d+/,
+    'versionCode Integer.parseInt(System.getenv("VERSION_CODE") ?: "1")'
+  )
+  .replace(
+    /versionName\s+"[^"]*"/,
+    'versionName (System.getenv("VERSION_NAME") ?: "1.0")'
+  );
+
 gradle += `
+
 android {
     signingConfigs {
         release {
@@ -43,13 +152,21 @@ android {
             }
         }
     }
+
     buildTypes {
         release {
-            if (System.getenv("KEYSTORE_PATH")) signingConfig signingConfigs.release
+            if (System.getenv("KEYSTORE_PATH")) {
+                signingConfig signingConfigs.release
+            }
+
             minifyEnabled false
         }
     }
 }
 `;
+
 fs.writeFileSync(gradlePath, gradle);
-console.log('Android project patched: plugin, icons, permissions, version, signing.');
+
+console.log(
+  "Android project patched successfully: native code, permissions, version and signing."
+);
