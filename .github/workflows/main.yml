@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "APK version"
+        description: "Version name (e.g. 1.0, 1.1)"
         required: true
         default: "1.0"
 
@@ -20,32 +20,60 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Make Gradle executable
-        run: chmod +x gradlew
+      - name: Install Capacitor
+        run: npm install
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
-
-      - name: Find APK
-        run: find . -name "*.apk" -type f
-
-      - name: Rename APK
+      - name: Create Android project
         run: |
-          mkdir -p release
-          cp app/build/outputs/apk/debug/app-debug.apk \
-             release/Alhowail-Field-v${{ inputs.version }}.apk
+          rm -rf android
+          npx cap add android
+          node patch-android.js
+          npx cap sync android
+
+      - name: Restore signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing"
+            exit 1
+          fi
+
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/alhowail.p12"
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/alhowail.p12
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ inputs.version }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+
+          cp app/build/outputs/apk/release/app-release.apk \
+            "$GITHUB_WORKSPACE/Alhowail-Field.apk"
 
       - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "v${{ inputs.version }}" \
-            "release/Alhowail-Field-v${{ inputs.version }}.apk" \
-            --title "Alhowail Field v${{ inputs.version }}" \
-            --notes "Alhowail Field APK version ${{ inputs.version }}"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-v${{ inputs.version }}-${{ github.run_number }}
+          name: Alhowail Field ${{ inputs.version }} (build ${{ github.run_number }})
+          make_latest: true
+          files: Alhowail-Field.apk
+          body: |
+            Alhowail Field APK version ${{ inputs.version }}
