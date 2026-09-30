@@ -1,0 +1,15 @@
+{
+  "appId": "com.alhowail.field",
+  "appName": "Alhowail Field",
+  "webDir": "www",
+  "server": {
+    "url": "https://tyressalesalhowail-arch.github.io/SalesmanApp/",
+    "cleartext": false,
+    "errorPath": "offline.html",
+    "allowNavigation": ["tyressalesalhowail-arch.github.io"]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}
